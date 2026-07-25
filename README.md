@@ -48,7 +48,7 @@ ShieldAI helps users make safer decisions before interacting with risky content.
 
  🧠 AI Feature
 
-ShieldAI includes an AI security assistant that analyzes suspicious content and explains possible risks.
+"ShieldAI uses the Google Gemini API (@google/genai) directly to analyze user-provided content for scam and phishing indicators."
 
  AI System Prompt
 
@@ -80,7 +80,9 @@ Always provide clear and accurate security guidance.
 - Framer Motion
 
  AI
-- Gemini API / AI Model
+- Google Gemini API integration architecture
+- Supabase Edge Functions
+- Local heuristic analyzer as fallback
 
  Deployment
 - Vercel
@@ -112,7 +114,7 @@ Always provide clear and accurate security guidance.
 Clone the repository:
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_LINK
+git https://github.com/tahir03709898288-png/Shield-AI.git
 ```
 
 Install dependencies:
@@ -124,7 +126,7 @@ npm install
 Create environment variables:
 
 ```
-GEMINI_API_KEY=your_api_key
+NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
 ```
 
 Run the project:
