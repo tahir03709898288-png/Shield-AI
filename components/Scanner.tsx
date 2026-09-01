@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { analyzeContent } from '@/lib/gemini';
 
 type InputType = 'url' | 'email' | 'sms' | 'whatsapp';
 
@@ -96,160 +97,9 @@ function getThreatColor(level: AnalysisResult['threatLevel']) {
   }
 }
 
-/**
- * Local heuristic analysis used as a fallback when the Gemini API is not
- * configured. This provides a transparent, rule-based assessment so the
- * scanner remains functional without a backend key.
- */
-function localAnalyze(content: string, type: InputType): AnalysisResult {
-  const text = content.toLowerCase();
-  const issues: string[] = [];
-  const recommendations: string[] = [];
-  let score = 10;
-
-  const scamKeywords = [
-    'urgent',
-    'verify your account',
-    'click here',
-    'suspend',
-    'wire',
-    'lottery',
-    'winner',
-    'prize',
-    'claim now',
-    'limited time',
-    'act now',
-    'confirm your identity',
-    'password expired',
-    'account locked',
-    'bitcoin',
-    'gift card',
-    'wire transfer',
-    'western union',
-    'moneygram',
-    'nigerian prince',
-    'dear beneficiary',
-    'congratulations you have won',
-    'free gift',
-    'tax refund',
-    'irs',
-    'social security',
-    'verify your identity',
-  ];
-
-  const urgencyKeywords = [
-    'immediately',
-    'within 24 hours',
-    'final notice',
-    'account will be closed',
-    'last warning',
-  ];
-
-  const phishingIndicators = [
-    'login',
-    'password',
-    'credit card',
-    'ssn',
-    'bank account',
-    'routing number',
-    'paypal',
-    'amazon',
-    'apple id',
-    'netflix',
-    'verify',
-  ];
-
-  let keywordHits = 0;
-  scamKeywords.forEach((kw) => {
-    if (text.includes(kw)) {
-      keywordHits++;
-      issues.push(`Detected common scam phrase: "${kw}"`);
-      score += 8;
-    }
-  });
-
-  urgencyKeywords.forEach((kw) => {
-    if (text.includes(kw)) {
-      issues.push(`Urgency tactic detected: "${kw}"`);
-      score += 10;
-    }
-  });
-
-  if (type === 'url') {
-    if (text.includes('bit.ly') || text.includes('tinyurl') || text.includes('t.co')) {
-      issues.push('URL shortener detected — often used to hide destinations');
-      score += 15;
-    }
-    if (/\d+\.\d+\.\d+\.\d+/.test(text)) {
-      issues.push('IP address used in URL instead of domain name');
-      score += 20;
-    }
-    if ((text.match(/-/g) || []).length > 3) {
-      issues.push('Excessive hyphens in domain — common in phishing URLs');
-      score += 10;
-    }
-    if (!text.startsWith('https://')) {
-      issues.push('URL does not use HTTPS encryption');
-      score += 8;
-    }
-  }
-
-  phishingIndicators.forEach((kw) => {
-    if (text.includes(kw)) {
-      if (!issues.some((i) => i.includes(kw))) {
-        issues.push(`Phishing indicator present: "${kw}"`);
-        score += 6;
-      }
-    }
-  });
-
-  if (content.length > 500 && keywordHits > 2) {
-    issues.push('Long message with multiple scam indicators');
-    score += 10;
-  }
-
-  if (issues.length === 0) {
-    issues.push('No strong scam indicators detected in this content');
-    score = Math.min(score, 15);
-  }
-
-  score = Math.min(Math.max(score, 5), 98);
-  const level = getThreatLevel(score);
-
-  if (level === 'Low') {
-    recommendations.push('No immediate action needed — content appears safe.');
-    recommendations.push('Still exercise caution before sharing personal info.');
-  } else if (level === 'Medium') {
-    recommendations.push('Do not click any links or download attachments.');
-    recommendations.push('Verify the sender through an official channel.');
-    recommendations.push('Do not share personal or financial information.');
-  } else {
-    recommendations.push('Do not respond, click links, or open attachments.');
-    recommendations.push('Delete the message and block the sender.');
-    recommendations.push('Report to your platform or local authorities.');
-    recommendations.push('Change passwords if you already interacted.');
-  }
-
-  let explanation = '';
-  if (level === 'Low') {
-    explanation =
-      'This content shows minimal signs of being a scam or phishing attempt. While no major red flags were detected, always stay cautious when sharing personal information online.';
-  } else if (level === 'Medium') {
-    explanation =
-      'This content contains several indicators commonly associated with scams or phishing. Exercise caution — avoid clicking links, sharing information, or responding until you can verify the source through an official channel.';
-  } else {
-    explanation =
-      'This content exhibits strong indicators of a scam or phishing attempt. Multiple red flags were detected. We strongly recommend not engaging with this content and following the safety recommendations below.';
-  }
-
-  return {
-    riskScore: Math.round(score),
-    threatLevel: level,
-    detectedIssues: issues.slice(0, 8),
-    explanation,
-    recommendations,
-  };
-}
+// NOTE: The scanner now calls a server-side edge function that forwards
+// requests to the Gemini API. Do not rely on client-side heuristics as a
+// substitute for an actual LLM response.
 
 function RiskMeter({ score }: { score: number }) {
   const radius = 90;
@@ -318,6 +168,7 @@ export default function Scanner() {
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -336,15 +187,22 @@ export default function Scanner() {
       if (step >= steps.length) clearInterval(interval);
     }, 500);
 
-    // In production, this calls the Gemini API via an edge function:
-    //   POST /api/analyze  { type, content }
-    // The edge function forwards to Gemini and returns structured JSON.
-    // See lib/gemini.ts for the integration architecture.
-    await new Promise((r) => setTimeout(r, 2600));
-
-    const analysis = localAnalyze(content, inputType);
-    setResult(analysis);
-    setStatus('done');
+    // Call the server-side analyze function which proxies to Gemini
+    setError(null);
+    try {
+      const analysis = await analyzeContent({
+        type: inputType,
+        content: content.trim(),
+      });
+      clearInterval(interval);
+      setScanProgress(100);
+      setResult(analysis);
+    } catch (err: any) {
+      clearInterval(interval);
+      setError(err?.message || 'AI analysis failed. Please try again later.');
+    } finally {
+      setStatus('done');
+    }
   };
 
   const reset = () => {
@@ -466,6 +324,27 @@ export default function Scanner() {
 
         {/* Results */}
         <AnimatePresence>
+          {status === 'done' && error && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="border-t border-slate-100"
+            >
+              <div className="p-6 sm:p-8">
+                <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-4">
+                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-red-700">Analysis Error</p>
+                    <p className="text-sm text-slate-600 mt-1">{error}</p>
+                    <p className="text-xs text-slate-400 mt-2">The analysis service returned an error. Please try again later.</p>
+                  </div>
+                </div>
+                <div className="mt-6 flex justify-center">
+                  <button onClick={reset} className="btn-secondary text-sm">Try Again</button>
+                </div>
+              </div>
+            </motion.div>
+          )}
           {status === 'done' && result && colors && (
             <motion.div
               initial={{ opacity: 0 }}

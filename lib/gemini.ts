@@ -13,9 +13,8 @@
  *   3. The browser calls the edge function, which calls Gemini and
  *      returns a structured AnalysisResult.
  *
- * Until the edge function is deployed, the scanner uses a transparent
- * local heuristic analyzer (see components/Scanner.tsx) so the product
- * remains fully functional without a backend key.
+ * The scanner calls a Supabase Edge Function which proxies to Gemini.
+ * Deploy the edge function at `supabase/functions/analyze/index.ts`.
  */
 
 export interface AnalysisRequest {
