@@ -25,33 +25,64 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
-    const prompt = `${GEMINI_SYSTEM_PROMPT}\n\nContent Type: ${body.type}\nContent:\n${body.content}\n\nRespond with a JSON object ONLY.`;
+    // sanitize input: collapse whitespace, trim, and limit length
+    const rawContent: string = String(body.content || '');
+    const sanitizedContent = rawContent.replace(/\s+/g, ' ').trim().slice(0, 20000);
 
-    const aiResp = await fetch(`${apiUrl}?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt: { text: prompt },
-        temperature: 0.2,
-        maxOutputTokens: 800,
-      }),
-    });
+    const prompt = `${GEMINI_SYSTEM_PROMPT}\n\nContent Type: ${body.type}\nContent:\n${sanitizedContent}\n\nRespond with a JSON object ONLY.`;
 
-    if (!aiResp.ok) {
-      const text = await aiResp.text();
-      return NextResponse.json({ error: 'Upstream AI error', details: text }, { status: 502 });
-    }
-
-    const aiJson = await aiResp.json();
     let outputText = '';
+    try {
+      // Try using the official Google client if available
+      const gaiclient = await import('@google/generative-ai').catch(() => null);
+      if (gaiclient && gaiclient.TextServiceClient) {
+        const { TextServiceClient } = gaiclient as any;
+        const client = new TextServiceClient({ apiKey });
+        const aiRes = await client.generateText({
+          model: 'gemini-1.5-flash',
+          // client library may accept either 'input' or 'prompt' shape
+          input: { text: prompt },
+          temperature: 0.2,
+          maxOutputTokens: 800,
+        } as any);
 
-    if (aiJson?.candidates && aiJson.candidates[0]?.output) outputText = aiJson.candidates[0].output;
-    else if (aiJson?.candidates && aiJson.candidates[0]?.content) outputText = aiJson.candidates[0].content[0]?.text || '';
-    else if (aiJson?.choices && aiJson.choices[0]?.message?.content) outputText = aiJson.choices[0].message.content;
-    else if (aiJson?.response) outputText = aiJson.response;
-    else outputText = JSON.stringify(aiJson);
+        // attempt multiple candidate shapes
+        if (aiRes?.candidates && aiRes.candidates[0]) {
+          outputText = aiRes.candidates[0].output || aiRes.candidates[0].content || '';
+        } else if (aiRes?.output) {
+          outputText = aiRes.output;
+        } else if (aiRes?.response) {
+          outputText = aiRes.response;
+        } else {
+          outputText = JSON.stringify(aiRes);
+        }
+      } else {
+        // Fallback: use direct REST call to the Generative Language API
+        const restResp = await fetch(`${apiUrl}?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: { text: prompt },
+            temperature: 0.2,
+            maxOutputTokens: 800,
+          }),
+        });
+
+        if (!restResp.ok) {
+          const t = await restResp.text();
+          return NextResponse.json({ error: 'Upstream AI error', details: t }, { status: 502 });
+        }
+
+        const aiJson = await restResp.json();
+        if (aiJson?.candidates && aiJson.candidates[0]?.output) outputText = aiJson.candidates[0].output;
+        else if (aiJson?.candidates && aiJson.candidates[0]?.content) outputText = aiJson.candidates[0].content[0]?.text || '';
+        else if (aiJson?.choices && aiJson.choices[0]?.message?.content) outputText = aiJson.choices[0].message.content;
+        else if (aiJson?.response) outputText = aiJson.response;
+        else outputText = JSON.stringify(aiJson);
+      }
+    } catch (e) {
+      return NextResponse.json({ error: 'AI provider error', details: String(e) }, { status: 502 });
+    }
 
     let parsed = null;
     try {
