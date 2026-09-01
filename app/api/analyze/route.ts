@@ -81,6 +81,13 @@ export async function POST(req: Request) {
       return out;
     }
 
+    function computeThreatLevelFromScore(score: number) {
+      if (isNaN(score)) return 'Low';
+      if (score < 30) return 'Low';
+      if (score < 70) return 'Medium';
+      return 'High';
+    }
+
     const body = await req.json();
     if (
       !body ||
@@ -144,9 +151,10 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
               Authorization: `Bearer ${groqApiKey}`,
             },
             body: JSON.stringify({
-              // many Groq endpoints accept an input or prompt field; use `input` as common name
+              // Request a JSON object response when supported
               input: prompt,
               max_output_tokens: 1200,
+              response_format: { type: 'json_object' },
             }),
           });
 
@@ -187,7 +195,11 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
             const resp = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                // request structured JSON output when possible
+                response_format: { type: 'json_object' },
+              }),
             });
 
             if (!resp.ok) {
@@ -242,39 +254,20 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
       }
     }
 
-    // If parsing still failed, return a deterministic safe fallback object
-    if (!parsed) {
-      parsed = {
-        riskScore: 0,
-        threatLevel: 'Safe',
-        detectedIssues: [],
-        explanation: 'Analysis complete',
-        recommendations: [],
-      };
-    }
+    // Coerce and sanitize parsed fields so we return real scores when available
+    const out: any = {};
+    out.riskScore = typeof parsed.riskScore === 'number' ? parsed.riskScore : Number(parsed.riskScore) || 0;
+    // ensure within 0-100
+    out.riskScore = Math.max(0, Math.min(100, Math.round(out.riskScore)));
+    // threatLevel: prefer provided normalized value; otherwise derive from score
+    const providedLevel = typeof parsed.threatLevel === 'string' ? parsed.threatLevel : '';
+    const normalizedLevel = (providedLevel || '').charAt(0).toUpperCase() + (providedLevel || '').slice(1).toLowerCase();
+    out.threatLevel = ['Low', 'Medium', 'High'].includes(normalizedLevel) ? normalizedLevel : computeThreatLevelFromScore(out.riskScore);
+    out.detectedIssues = Array.isArray(parsed.detectedIssues) ? parsed.detectedIssues : (parsed.issues && Array.isArray(parsed.issues) ? parsed.issues : []);
+    out.explanation = typeof parsed.explanation === 'string' && parsed.explanation.trim() ? parsed.explanation : (parsed.summary && typeof parsed.summary === 'string' ? parsed.summary : 'Analysis complete');
+    out.recommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations : (parsed.actions && Array.isArray(parsed.actions) ? parsed.actions : []);
 
-    // Validate final shape loosely; accept 'Safe' as a valid threatLevel
-    const validLevels = ['Low', 'Medium', 'High', 'Safe'];
-    const valid =
-      parsed &&
-      typeof parsed.riskScore === 'number' &&
-      validLevels.includes(parsed.threatLevel) &&
-      Array.isArray(parsed.detectedIssues) &&
-      typeof parsed.explanation === 'string' &&
-      Array.isArray(parsed.recommendations);
-
-    if (!valid) {
-      // If the parsed object doesn't match expectations, coerce to safe fallback
-      parsed = {
-        riskScore: 0,
-        threatLevel: 'Safe',
-        detectedIssues: [],
-        explanation: 'Analysis complete',
-        recommendations: [],
-      };
-    }
-
-    return NextResponse.json(parsed, { status: 200 });
+    return NextResponse.json(out, { status: 200 });
   } catch (err) {
     return NextResponse.json({ error: 'Internal server error', details: String(err) }, { status: 500 });
   }
