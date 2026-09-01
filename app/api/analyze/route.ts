@@ -90,8 +90,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    const groqKeyEnv = process.env.GROQ_API_KEY;
+    const gemKeyEnv = process.env.GEMINI_API_KEY;
+    if (!groqKeyEnv && !gemKeyEnv) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
@@ -219,11 +220,14 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
       return NextResponse.json({ error: 'AI request failed', details: String(e) }, { status: 502 });
     }
 
-    let parsed = null;
+    let parsed: any = null;
+    // Clean common markdown/code-fence wrappers before parsing
+    const cleaned = cleanAIAssistantOutput(outputText);
     try {
-      parsed = JSON.parse(outputText);
+      if (cleaned) parsed = JSON.parse(cleaned);
     } catch (e) {
-      const match = outputText.match(/\{[\s\S]*\}/);
+      // try to extract first JSON object from the raw output as a fallback
+      const match = (cleaned || outputText || '').match(/\{[\s\S]*\}/);
       if (match) {
         try {
           parsed = JSON.parse(match[0]);
@@ -231,6 +235,11 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
           parsed = null;
         }
       }
+    }
+
+    // If parsing still failed, attempt a best-effort heuristic extraction
+    if (!parsed) {
+      parsed = fallbackExtract(cleaned || outputText);
     }
 
     const valid =
