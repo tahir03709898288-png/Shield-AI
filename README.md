@@ -78,168 +78,99 @@ Always provide clear and accurate security guidance.
 - TypeScript
 - Tailwind CSS
 - Framer Motion
+# 🛡️ ShieldAI
 
- AI
-- Google Gemini API integration architecture
-- Supabase Edge Functions
-- Local heuristic analyzer as fallback
+![License](https://img.shields.io/badge/license-MIT-green) ![Vercel](https://img.shields.io/badge/deploy-vercel-black) ![Next.js](https://img.shields.io/badge/framework-Next.js-000)
 
- Deployment
-- Vercel
-
- Tools
-- GitHub
-- VS Code
+Live demo: https://shield-ai-azure-nine.vercel.app
 
 ---
 
- 📸 Screenshots
+## Description
 
- ## Home Page
-
-![Home Screenshot](screenshots/home.png)
-
-## AI Scanner
-
-![Scanner Screenshot](screenshots/scanner.png)
-
- ## Threat Analysis Result
-
-![Result Screenshot](screenshots/result.png)
+ShieldAI is an AI-powered Digital Safety Advisor that analyzes user-provided URLs, emails, and messages to detect scams, phishing, and other digital threats. It returns a numeric risk score, a threat level, a breakdown of detected issues, an explanation, and actionable recommendations.
 
 ---
 
- 🚀 How To Run Locally
+## Features
 
-Clone the repository:
+- AI scam & phishing detection
+- Risk scoring (0–100)
+- Threat level breakdown (Low / Medium / High)
+- Detected issues list (bulleted)
+- Human-readable explanation and recommendations
+- Privacy-first: analysis performed server-side (keys not exposed)
+
+---
+
+## Tech Stack
+
+- Frontend: Next.js, React, TypeScript
+- Styling: Tailwind CSS
+- Animations: Framer Motion
+- AI Providers: Groq (`GROQ_API_KEY`) and Google Gemini (`GEMINI_API_KEY`) (server-side)
+- Deployment: Vercel
+
+---
+
+## Quick Start (Local)
+
+1. Clone the repo:
 
 ```bash
-git https://github.com/tahir03709898288-png/Shield-AI.git
+git clone https://github.com/tahir03709898288-png/Shield-AI.git
+cd Shield-AI
 ```
 
-Install dependencies:
+2. Install dependencies:
 
 ```bash
 npm install
 ```
 
-Create environment variables (local development):
+3. Create a `.env.local` in the project root and add server-side API keys (do NOT expose these as NEXT_PUBLIC_ variables):
 
-```
+```text
+# Preferred: GROQ (llama-3.1-8b-instant)
+GROQ_API_KEY=your_groq_api_key_here
+
+# Fallback: Gemini (used when GROQ not present)
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Optional (if you use Supabase edge functions)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_public_key
 ```
 
-Do NOT set your Gemini API key as a client-side env var (for example,
-`NEXT_PUBLIC_GEMINI_API_KEY`). The Gemini key must remain server-side
-and stored as a Supabase secret (see "Gemini integration & deployment" below).
-
-Run the project:
+4. Run the development server:
 
 ```bash
 npm run dev
 ```
 
-Open:
-
-```
-http://localhost:3000
-```
+5. Open http://localhost:3000 in your browser.
 
 ---
 
-## Gemini integration & deployment
+## API & Environment Notes
 
-This project uses a Supabase Edge Function that performs the Gemini
-API call server-side so your Gemini API key is never exposed to browsers.
-
-Supabase function file: `supabase/functions/analyze/index.ts`
-
-1) Add the Gemini secret to your Supabase project (server-side only):
-
-```bash
-supabase secrets set GEMINI_API_KEY="ya29_your_gemini_key_here"
-# optionally override endpoint:
-supabase secrets set GEMINI_API_URL="https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText"
-```
-
-2) Deploy the edge function (requires supabase CLI):
-
-```bash
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-supabase functions deploy analyze --project-ref YOUR_PROJECT_REF
-```
-
-3) Frontend environment variables (Vercel / Netlify / local):
-
-- `NEXT_PUBLIC_SUPABASE_URL` — your Supabase URL (example: https://xyz.supabase.co)
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — your Supabase anon/public key
-
-Do NOT add `GEMINI_API_KEY` to Vercel public envs. Keep Gemini keys only in
-Supabase secrets so they remain server-side.
-
-4) Quick smoke test (replace placeholders):
-
-```bash
-curl -X POST "${NEXT_PUBLIC_SUPABASE_URL}/functions/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \
-  -d '{"type":"email","content":"Please click this link to claim your prize"}'
-```
-
-Expected response: a JSON object with the exact shape:
-
-```json
-{
-  "riskScore": 0,
-  "threatLevel": "Low|Medium|High",
-  "detectedIssues": ["..."],
-  "explanation": "...",
-  "recommendations": ["..."]
-}
-```
-
-5) Verify end-to-end behavior:
-
-- Trigger an analysis in the web UI and inspect the Network tab — the
-  client should POST to `${NEXT_PUBLIC_SUPABASE_URL}/functions/v1/analyze`.
-- Confirm the function logs in Supabase show an outbound request to the
-  Gemini/Generative API and that the function returned validated JSON.
-
-6) Vercel deployment notes:
-
-- Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
-  Vercel project settings (Environment Variables).
-- Do NOT add `GEMINI_API_KEY` in Vercel or any client-facing envs.
-- Deploy your frontend on Vercel as usual; the frontend will call the
-  Supabase Edge Function which performs the Gemini request server-side.
-
-7) Security reminder
-
-- Remove any exposed Gemini key from `.env.local` (for example,
-  `NEXT_PUBLIC_GEMINI_API_KEY`) immediately. Client-exposed keys can be
-  leaked in build artifacts and are not safe for secrets.
-
-
----
-  🔮 Future Improvements
-
-- Browser security extension
-- Mobile application
-- Real-time threat intelligence
-- Advanced AI security models
+- The app calls a server-side route (`/api/analyze`) which proxies requests to Groq or Gemini. Set either `GROQ_API_KEY` or `GEMINI_API_KEY` in your environment. Do NOT set `NEXT_PUBLIC_GEMINI_API_KEY` or any public key.
+- If deploying to Vercel, add `GROQ_API_KEY` and/or `GEMINI_API_KEY` in the project Environment Variables (Server scope).
 
 ---
 
- 👨‍💻 Developer
+## Live Demo
 
-Tahir Labs
-
-Building AI-powered solutions for a safer digital future.
-
-**Project:** ShieldAI
+- https://shield-ai-azure-nine.vercel.app (live demo)
 
 ---
 
-⭐ Built as a Final AI App Project
+## Contributing
+
+Contributions welcome — open an issue or PR with improvements.
+
+---
+
+## License
+
+MIT
