@@ -127,41 +127,92 @@ Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, a
     let lastErrorText = '';
 
     try {
-      const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro'];
-      for (const modelName of modelsToTry) {
+      const groqKey = process.env.GROQ_API_KEY;
+      const fallbackKey = process.env.GEMINI_API_KEY;
+      const useGroq = Boolean(groqKey);
+
+      if (useGroq) {
+        // Use Groq API with Bearer auth. Do NOT hardcode API keys in source.
+        const groqApiKey = groqKey as string;
+        const url = 'https://api.groq.ai/v1/models/llama-3.1-8b-instant/generate';
         try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(
-            apiKey
-          )}`;
           const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${groqApiKey}`,
+            },
+            body: JSON.stringify({
+              // many Groq endpoints accept an input or prompt field; use `input` as common name
+              input: prompt,
+              max_output_tokens: 1200,
+            }),
           });
 
           if (!resp.ok) {
             lastErrorText = await resp.text().catch(() => resp.statusText || '');
-            // try next model
-            continue;
+          } else {
+            const aiJson = await resp.json().catch(() => null);
+            if (aiJson) {
+              // Try multiple plausible response shapes for Groq
+              outputText = aiJson?.output?.[0]?.content?.[0]?.text || aiJson?.output_text || aiJson?.result || '';
+              // Some Groq responses nest under `choices` or `generations`
+              if (!outputText) {
+                outputText = aiJson?.choices?.[0]?.message?.content?.[0]?.text || aiJson?.generations?.[0]?.text || '';
+              }
+            } else {
+              lastErrorText = 'Invalid JSON response from Groq';
+            }
           }
-
-          const aiJson = await resp.json().catch(() => null);
-          if (!aiJson) {
-            lastErrorText = 'Invalid JSON response from model';
-            continue;
-          }
-
-          // parse expected shape: candidates[0].content[0].parts[0].text
-          outputText = aiJson?.candidates?.[0]?.content?.[0]?.parts?.[0]?.text || '';
-          if (!outputText) {
-            // try other shapes
-            outputText = aiJson?.candidates?.[0]?.output || aiJson?.response || '';
-          }
-
-          if (outputText) break;
         } catch (innerErr) {
           lastErrorText = String(innerErr);
-          continue;
+        }
+      }
+
+      // If Groq was not used or returned nothing, fallback to Gemini (if configured)
+      if (!outputText) {
+        const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro'];
+        const gemKey = fallbackKey as string | undefined;
+        if (!gemKey) {
+          // no Gemini key configured; if Groq failed, return the error collected
+          return NextResponse.json({ error: 'AI request failed', details: lastErrorText || 'No AI provider configured' }, { status: 502 });
+        }
+
+        for (const modelName of modelsToTry) {
+          try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(
+              gemKey
+            )}`;
+            const resp = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+            });
+
+            if (!resp.ok) {
+              lastErrorText = await resp.text().catch(() => resp.statusText || '');
+              // try next model
+              continue;
+            }
+
+            const aiJson = await resp.json().catch(() => null);
+            if (!aiJson) {
+              lastErrorText = 'Invalid JSON response from model';
+              continue;
+            }
+
+            // parse expected shape: candidates[0].content[0].parts[0].text
+            outputText = aiJson?.candidates?.[0]?.content?.[0]?.parts?.[0]?.text || '';
+            if (!outputText) {
+              // try other shapes
+              outputText = aiJson?.candidates?.[0]?.output || aiJson?.response || '';
+            }
+
+            if (outputText) break;
+          } catch (innerErr) {
+            lastErrorText = String(innerErr);
+            continue;
+          }
         }
       }
     } catch (e) {
