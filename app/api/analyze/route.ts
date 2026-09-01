@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const apiKey = process.env.GEMINI_API_KEY;
     const apiUrl =
       process.env.GEMINI_API_URL ||
-      'https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText';
+      'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateText';
 
     if (!apiKey) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
@@ -35,24 +35,27 @@ export async function POST(req: Request) {
     try {
       // Try using the official Google client if available
       const gaiclient = await import('@google/generative-ai').catch(() => null);
-      if (gaiclient && gaiclient.TextServiceClient) {
-        const { TextServiceClient } = gaiclient as any;
-        const client = new TextServiceClient({ apiKey });
-        const aiRes = await client.generateText({
-          model: 'gemini-1.5-flash',
-          // client library may accept either 'input' or 'prompt' shape
+      if (gaiclient && gaiclient.GoogleGenerativeAI) {
+        const { GoogleGenerativeAI } = gaiclient as any;
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const aiRes = await model.generate({
           input: { text: prompt },
           temperature: 0.2,
           maxOutputTokens: 800,
-        } as any);
+        });
 
-        // attempt multiple candidate shapes
-        if (aiRes?.candidates && aiRes.candidates[0]) {
+        // extract text from possible shapes
+        if (aiRes?.output?.[0]?.content) {
+          // v1 output shape: output[0].content[0].text
+          const contentItem = aiRes.output[0].content.find((c: any) => c?.text);
+          outputText = contentItem?.text || '';
+        } else if (aiRes?.candidates && aiRes.candidates[0]) {
           outputText = aiRes.candidates[0].output || aiRes.candidates[0].content || '';
-        } else if (aiRes?.output) {
-          outputText = aiRes.output;
         } else if (aiRes?.response) {
           outputText = aiRes.response;
+        } else if (typeof aiRes === 'string') {
+          outputText = aiRes;
         } else {
           outputText = JSON.stringify(aiRes);
         }
