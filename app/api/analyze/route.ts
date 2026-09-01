@@ -4,9 +4,83 @@ import { GEMINI_SYSTEM_PROMPT } from '@/lib/gemini';
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204 });
 }
-
 export async function POST(req: Request) {
   try {
+    // Helper: remove code fences and inline backticks, and extract first JSON object
+    function cleanAIAssistantOutput(text: string | undefined): string {
+      if (!text) return '';
+      let t = String(text);
+      // unwrap triple-backtick blocks with optional language (```json ... ```)
+      t = t.replace(/```(?:\w*\n)?([\s\S]*?)```/g, '$1');
+      // unwrap inline backticks
+      t = t.replace(/`([^`]*)`/g, '$1');
+      t = t.trim();
+      // try to extract the first {...} JSON object from the text
+      const first = t.indexOf('{');
+      const last = t.lastIndexOf('}');
+      if (first !== -1 && last !== -1 && last >= first) {
+        return t.slice(first, last + 1);
+      }
+      return t;
+    }
+
+    // Helper: best-effort fallback extraction of required fields
+    function fallbackExtract(text: string | undefined) {
+      const t = String(text || '');
+      const out: any = {
+        riskScore: 0,
+        threatLevel: 'Low',
+        detectedIssues: [] as string[],
+        explanation: '',
+        recommendations: [] as string[],
+      };
+
+      // riskScore: look for a number 0-100
+      const riskMatch = t.match(/(risk score|riskScore|risk):?\s*(\d{1,3})/i);
+      if (riskMatch) out.riskScore = Math.min(100, Math.max(0, Number(riskMatch[2])));
+      else {
+        const percent = t.match(/(\d{1,3})\s*%/);
+        if (percent) out.riskScore = Math.min(100, Math.max(0, Number(percent[1])));
+      }
+
+      // threatLevel: Low|Medium|High
+      const level = t.match(/\b(Low|Medium|High)\b/i);
+      if (level) out.threatLevel = level[1][0].toUpperCase() + level[1].slice(1).toLowerCase();
+
+      // detectedIssues: bullets or numbered lists
+      const bullets = Array.from(t.matchAll(/^\s*[-*]\s*(.+)$/gim)).map(m => m[1].trim());
+      if (bullets.length) out.detectedIssues = bullets;
+      else {
+        // try to find a section starting with Detected Issues: or Issues:
+        const issuesSection = t.match(/(?:Detected Issues|Issues)[:\-]?\s*([\s\S]*?)(?:\n\s*\n|$)/i);
+        if (issuesSection) {
+          const lines = issuesSection[1].split(/\n/).map(l => l.replace(/^\s*[-\d\.\)\s]*/, '').trim()).filter(Boolean);
+          out.detectedIssues = lines.slice(0, 20);
+        }
+      }
+
+      // explanation: look for Explanation: heading
+      const expl = t.match(/Explanation:?\s*([\s\S]*?)(?:\n\s*\n|(?:Recommendations|Recommended|Recommendations:)[:\-]?|$)/i);
+      if (expl) out.explanation = expl[1].trim();
+
+      // recommendations: bullets under Recommendations:
+      const recSection = t.match(/Recommendations?:?\s*([\s\S]*?)(?:\n\s*\n|$)/i);
+      if (recSection) {
+        const recBullets = Array.from(recSection[1].matchAll(/^\s*[-*]\s*(.+)$/gim)).map(m => m[1].trim());
+        if (recBullets.length) out.recommendations = recBullets;
+        else {
+          out.recommendations = recSection[1].split(/\n/).map(l => l.trim()).filter(Boolean).slice(0, 10);
+        }
+      }
+
+      // ensure types
+      out.riskScore = Number(out.riskScore) || 0;
+      out.detectedIssues = Array.isArray(out.detectedIssues) ? out.detectedIssues : [];
+      out.recommendations = Array.isArray(out.recommendations) ? out.recommendations : [];
+
+      return out;
+    }
+
     const body = await req.json();
     if (
       !body ||
@@ -24,7 +98,30 @@ export async function POST(req: Request) {
     // sanitize input
     const rawContent: string = String(body.content || '');
     const sanitizedContent = rawContent.replace(/\s+/g, ' ').trim().slice(0, 20000);
-    const prompt = `${GEMINI_SYSTEM_PROMPT}\n\nContent Type: ${body.type}\nContent:\n${sanitizedContent}\n\nRespond with a JSON object ONLY.`;
+    const prompt = `${GEMINI_SYSTEM_PROMPT}
+
+Content Type: ${body.type}
+Content:
+${sanitizedContent}
+
+IMPORTANT: Respond with ONLY a single, syntactically valid JSON object and nothing else. The JSON MUST have exactly these fields with these types:
+{
+  "riskScore": number, // 0-100
+  "threatLevel": "Low" | "Medium" | "High",
+  "detectedIssues": string[],
+  "explanation": string,
+  "recommendations": string[]
+}
+
+Do NOT wrap the JSON in markdown/code fences, do NOT include explanatory text, and do NOT return multiple JSON objects. If you must include any additional notes, place them in a top-level field named "notes" (but prefer not to). Example JSON:
+{
+  "riskScore": 42,
+  "threatLevel": "Medium",
+  "detectedIssues": ["suspicious link"],
+  "explanation": "Why...",
+  "recommendations": ["remove link", "verify sender"]
+}
+`; 
 
     let outputText = '';
     let lastErrorText = '';
