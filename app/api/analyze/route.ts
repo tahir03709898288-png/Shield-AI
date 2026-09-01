@@ -30,99 +30,42 @@ export async function POST(req: Request) {
     let lastErrorText = '';
 
     try {
-      // Call ModelService.ListModels to find a supported model instead of hardcoding
-      const listUrl = `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(apiKey)}`;
-      const listResp = await fetch(listUrl, { method: 'GET' });
-      if (!listResp.ok) {
-        lastErrorText = await listResp.text().catch(() => listResp.statusText || '');
-        return NextResponse.json({ error: 'Failed to list models', details: lastErrorText }, { status: 502 });
-      }
+      const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro'];
+      for (const modelName of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(
+            apiKey
+          )}`;
+          const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          });
 
-      const listJson = await listResp.json().catch(() => null);
-      const models: any[] = listJson?.models || [];
-
-      // Select a model that supports generateContent, prefer gemini models
-      let chosen: { name: string; method: 'generateContent' | 'generateText' } | null = null;
-
-      for (const m of models) {
-        const name: string = m?.name || '';
-        const methods: string[] = m?.supportedGenerationMethods || m?.supportedMethods || [];
-        if (name.toLowerCase().includes('gemini') && methods.includes('generateContent')) {
-          chosen = { name, method: 'generateContent' };
-          break;
-        }
-      }
-
-      if (!chosen) {
-        for (const m of models) {
-          const name: string = m?.name || '';
-          const methods: string[] = m?.supportedGenerationMethods || m?.supportedMethods || [];
-          if (name.toLowerCase().includes('gemini') && methods.includes('generateText')) {
-            chosen = { name, method: 'generateText' };
-            break;
+          if (!resp.ok) {
+            lastErrorText = await resp.text().catch(() => resp.statusText || '');
+            // try next model
+            continue;
           }
-        }
-      }
 
-      if (!chosen) {
-        for (const m of models) {
-          const name: string = m?.name || '';
-          const methods: string[] = m?.supportedGenerationMethods || m?.supportedMethods || [];
-          if (methods.includes('generateContent')) {
-            chosen = { name, method: 'generateContent' };
-            break;
+          const aiJson = await resp.json().catch(() => null);
+          if (!aiJson) {
+            lastErrorText = 'Invalid JSON response from model';
+            continue;
           }
-        }
-      }
 
-      if (!chosen) {
-        for (const m of models) {
-          const name: string = m?.name || '';
-          const methods: string[] = m?.supportedGenerationMethods || m?.supportedMethods || [];
-          if (methods.includes('generateText')) {
-            chosen = { name, method: 'generateText' };
-            break;
+          // parse expected shape: candidates[0].content[0].parts[0].text
+          outputText = aiJson?.candidates?.[0]?.content?.[0]?.parts?.[0]?.text || '';
+          if (!outputText) {
+            // try other shapes
+            outputText = aiJson?.candidates?.[0]?.output || aiJson?.response || '';
           }
+
+          if (outputText) break;
+        } catch (innerErr) {
+          lastErrorText = String(innerErr);
+          continue;
         }
-      }
-
-      if (!chosen) {
-        return NextResponse.json({ error: 'No suitable model found' }, { status: 502 });
-      }
-
-      const method = chosen.method;
-      const modelPath = chosen.name; // e.g., 'models/gemini-1.5-flash'
-      const url = `https://generativelanguage.googleapis.com/v1/${modelPath}:${method}?key=${encodeURIComponent(apiKey)}`;
-
-      const bodyPayload =
-        method === 'generateContent'
-          ? { contents: [{ parts: [{ text: prompt }] }] }
-          : { prompt: { text: prompt }, temperature: 0.2, maxOutputTokens: 800 };
-
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload),
-      });
-
-      if (!resp.ok) {
-        lastErrorText = await resp.text().catch(() => resp.statusText || '');
-        return NextResponse.json({ error: 'Upstream AI error', details: lastErrorText }, { status: 502 });
-      }
-
-      const aiJson = await resp.json().catch(() => null);
-      if (!aiJson) {
-        return NextResponse.json({ error: 'Invalid AI response' }, { status: 502 });
-      }
-
-      if (method === 'generateContent') {
-        outputText = aiJson?.candidates?.[0]?.content?.[0]?.parts?.[0]?.text || '';
-      } else {
-        outputText = aiJson?.candidates?.[0]?.output || aiJson?.candidates?.[0]?.content?.[0]?.text || '';
-      }
-
-      if (!outputText) {
-        outputText = aiJson?.response || JSON.stringify(aiJson);
       }
     } catch (e) {
       return NextResponse.json({ error: 'AI request failed', details: String(e) }, { status: 502 });
