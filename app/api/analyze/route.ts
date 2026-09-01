@@ -39,25 +39,26 @@ export async function POST(req: Request) {
         const { GoogleGenerativeAI } = gaiclient as any;
         const genAI = new GoogleGenerativeAI(apiKey);
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const aiRes = await model.generate({
-          input: { text: prompt },
-          temperature: 0.2,
-          maxOutputTokens: 800,
-        });
-
-        // extract text from possible shapes
-        if (aiRes?.output?.[0]?.content) {
-          // v1 output shape: output[0].content[0].text
-          const contentItem = aiRes.output[0].content.find((c: any) => c?.text);
+        // Use generateContent as newer SDK surface; pass prompt string
+        const result = await model.generateContent(prompt);
+        // Prefer the response.text() if available
+        if (result?.response && typeof result.response.text === 'function') {
+          try {
+            outputText = await result.response.text();
+          } catch (e) {
+            outputText = String(result.response);
+          }
+        } else if (result?.output?.[0]?.content) {
+          const contentItem = result.output[0].content.find((c: any) => c?.text);
           outputText = contentItem?.text || '';
-        } else if (aiRes?.candidates && aiRes.candidates[0]) {
-          outputText = aiRes.candidates[0].output || aiRes.candidates[0].content || '';
-        } else if (aiRes?.response) {
-          outputText = aiRes.response;
-        } else if (typeof aiRes === 'string') {
-          outputText = aiRes;
+        } else if (result?.candidates && result.candidates[0]) {
+          outputText = result.candidates[0].output || result.candidates[0].content || '';
+        } else if (result?.response) {
+          outputText = String(result.response);
+        } else if (typeof result === 'string') {
+          outputText = result;
         } else {
-          outputText = JSON.stringify(aiRes);
+          outputText = JSON.stringify(result);
         }
       } else {
         // Fallback: use direct REST call to the Generative Language API
