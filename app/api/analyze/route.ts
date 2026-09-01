@@ -1,18 +1,11 @@
-// @ts-nocheck
-import { serve } from 'std/server';
-import { GEMINI_SYSTEM_PROMPT } from '../../../lib/gemini';
+import { NextResponse } from 'next/server';
+import { GEMINI_SYSTEM_PROMPT } from '@/lib/gemini';
 
-serve(async (req: Request) => {
-  const CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204 });
+}
 
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
-  }
-
+export async function POST(req: Request) {
   try {
     const body = await req.json();
     if (
@@ -20,22 +13,16 @@ serve(async (req: Request) => {
       !['url', 'email', 'sms', 'whatsapp'].includes(body.type) ||
       typeof body.content !== 'string'
     ) {
-      return new Response(JSON.stringify({ error: 'Invalid request' }), {
-        status: 400,
-        headers: CORS_HEADERS,
-      });
+      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
 
-    const apiKey = Deno.env.get('GEMINI_API_KEY');
+    const apiKey = process.env.GEMINI_API_KEY;
     const apiUrl =
-      Deno.env.get('GEMINI_API_URL') ||
+      process.env.GEMINI_API_URL ||
       'https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText';
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
-        status: 500,
-        headers: CORS_HEADERS,
-      });
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
     const prompt = `${GEMINI_SYSTEM_PROMPT}\n\nContent Type: ${body.type}\nContent:\n${body.content}\n\nRespond with a JSON object ONLY.`;
@@ -54,16 +41,12 @@ serve(async (req: Request) => {
 
     if (!aiResp.ok) {
       const text = await aiResp.text();
-      return new Response(JSON.stringify({ error: 'Upstream AI error', details: text }), {
-        status: 502,
-        headers: CORS_HEADERS,
-      });
+      return NextResponse.json({ error: 'Upstream AI error', details: text }, { status: 502 });
     }
 
     const aiJson = await aiResp.json();
     let outputText = '';
 
-    // Support several possible response shapes
     if (aiJson?.candidates && aiJson.candidates[0]?.output) outputText = aiJson.candidates[0].output;
     else if (aiJson?.candidates && aiJson.candidates[0]?.content) outputText = aiJson.candidates[0].content[0]?.text || '';
     else if (aiJson?.choices && aiJson.choices[0]?.message?.content) outputText = aiJson.choices[0].message.content;
@@ -93,20 +76,11 @@ serve(async (req: Request) => {
       Array.isArray(parsed.recommendations);
 
     if (!valid) {
-      return new Response(JSON.stringify({ error: 'Malformed AI response', debug: parsed || outputText }), {
-        status: 502,
-        headers: CORS_HEADERS,
-      });
+      return NextResponse.json({ error: 'Malformed AI response', debug: parsed || outputText }, { status: 502 });
     }
 
-    return new Response(JSON.stringify(parsed), {
-      status: 200,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-    });
+    return NextResponse.json(parsed, { status: 200 });
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'Internal server error', details: String(err) }), {
-      status: 500,
-      headers: CORS_HEADERS,
-    });
+    return NextResponse.json({ error: 'Internal server error', details: String(err) }, { status: 500 });
   }
-});
+}

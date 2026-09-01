@@ -47,20 +47,22 @@ Be precise, conservative, and never fabricate indicators.`;
 export async function analyzeContent(
   req: AnalysisRequest
 ): Promise<AnalysisResult> {
-  const response = await fetch(
-    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/analyze`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify(req),
-    }
-  );
+  const response = await fetch(`/api/analyze`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(req),
+  });
 
   if (!response.ok) {
-    throw new Error(`Analysis failed: ${response.status}`);
+    let text = '';
+    try {
+      text = await response.text();
+    } catch (e) {
+      /* noop */
+    }
+    throw new Error(`Analysis failed: ${response.status} ${text}`);
   }
 
   return (await response.json()) as AnalysisResult;
